@@ -1,0 +1,12 @@
+python -m torch.distributed.launch --nproc_per_node=1 main_pretrain_metro_per_farm.py \
+--model convnextv2_atto \
+--decoder_depth 1 --decoder_embed_dim 160 \
+--batch_size 64 --update_freq 8 \
+--input_size 11 \
+--mask_ratio 0.6 \
+--blr 1.5e-4 \
+--epochs 1600 \
+--warmup_epochs 40 \
+--data_root /inspire/ssd/project/sais-mtm/public/qlz/data/PowerEstimateData/PowerEstimateData-Per-Farm-Debug \
+--farm_type "solar" --farm_id "1329" \
+--output_dir ./checkpoints/test/
