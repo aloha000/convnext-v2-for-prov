@@ -1,0 +1,30 @@
+{
+  "files": 800,
+  "tasks": 25,
+  "workers": 25,
+  "shape": [
+    2,
+    8,
+    60,
+    92
+  ],
+  "ignore_nan": false,
+  "dtype_acc": "<class 'numpy.float64'>",
+  "mean_minmax_hw": [
+    -2.6705021226475707,
+    295.2551284706644
+  ],
+  "std_minmax_hw": [
+    0.3257149655414286,
+    279.3728544997761
+  ],
+  "mean_minmax_spatial": [
+    -5.757220651672511,
+    299.6416314884303
+  ],
+  "std_minmax_spatial": [
+    0.2312536796731544,
+    302.2488716321994
+  ],
+  "N_or_min_valid": 12792
+}

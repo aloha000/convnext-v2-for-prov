@@ -15,8 +15,10 @@ MASTER_PORT=${MASTER_PORT:-29500}
 # ---------- Search space ----------
 # all_metro_fcmae_dims=( "4,8,16,16" "4,8,16,32" "8,16,16,16" "8,16,32,32" "8,16,32,64")
 # all_embed_dim=(16 32 16 32 64)
-all_metro_fcmae_dims=( "4,8,16,16" "4,8,16,32" "8,16,32,64")
-all_embed_dim=(16 32 64)
+# all_metro_fcmae_dims=( "4,8,16,16" "4,8,16,32" "8,16,32,64")
+all_metro_fcmae_dims=( "4,8,16,16" )
+# all_embed_dim=(16 32 64)
+all_embed_dim=(16)
 
 # Sanity check
 if [ "${#all_metro_fcmae_dims[@]}" -ne "${#all_embed_dim[@]}" ]; then
@@ -25,14 +27,41 @@ if [ "${#all_metro_fcmae_dims[@]}" -ne "${#all_embed_dim[@]}" ]; then
 fi
 
 # ---------- Fixed args (edit as needed) ----------
-FARM_TYPE="all"
-DATA_DIR=""/inspire/ssd/project/sais-mtm/public/qlz/data/PowerEstimateData/gongjia_processed_data/self_supervised/processed_wind""
+FARM_TYPE="wind"
+DATA_DIR=""/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/self_supervised/processed_wind_1.2_2""
 
+# todo: 调小patch size，调小batch size
+
+PROVINCE="Guangdong" 
 TOTAL_BATCH_SIZE=$((2048 / 16))
-PER_PROC_BATCH_SIZE=32
+PER_PROC_BATCH_SIZE=8
+PATCH_SIZE=4
 UPDATE_FREQ=$(( TOTAL_BATCH_SIZE / PER_PROC_BATCH_SIZE / NPROC ))
 echo "$UPDATE_FREQ"  # 1
-INPUT_SIZE=11
+case "${PROVINCE}" in
+  Guangdong)
+    INPUT_SIZE="60,92"
+    ;;
+  Guangxi)
+    INPUT_SIZE="60,92"
+    ;;
+  Yunnan)
+    INPUT_SIZE="92,108"
+    ;;
+  Guizhou)
+    INPUT_SIZE="56,76"
+    ;;
+  Hainan)
+    INPUT_SIZE="28,32"
+    ;;
+  *)
+    echo "Error: unknown province ${PROVINCE}"
+    exit 1
+    ;;
+esac
+
+echo "Province=${PROVINCE}, INPUT_SIZE=${INPUT_SIZE}"
+
 MASK_RATIO=0.6
 BLR=1.5e-4
 EPOCHS=100
@@ -40,7 +69,7 @@ WARMUP_EPOCHS=1
 DECODER_DEPTH=1
 SAVE_CKPT_FREQ=1
 SAVE_CKPT_NUM=-1
-NUM_WORKERS=1
+NUM_WORKERS=0
 
 # ---------- Sweep ----------
 for i in "${!all_embed_dim[@]}"; do
@@ -48,7 +77,7 @@ for i in "${!all_embed_dim[@]}"; do
   dims="${all_metro_fcmae_dims[$i]}"
   SEED=$((42 + i))
 
-  OUTDIR="./checkpoints/all-whole-pretrain-${dims}"
+  OUTDIR="/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/checkpoints_1.2/all-whole-pretrain-${PROVINCE}-${dims}"
   LOGFILE="${OUTDIR}/train.log"
   mkdir -p "${OUTDIR}"
 
@@ -63,10 +92,11 @@ for i in "${!all_embed_dim[@]}"; do
       --decoder_depth "${DECODER_DEPTH}" \
       --decoder_embed_dim "${embed_dim}" \
       --metro_fcmae_dims "${dims}" \
-      --metro_feat_channel 24 \
+      --metro_feat_channel 14 \
       --save_ckpt_freq "${SAVE_CKPT_FREQ}" \
       --save_ckpt_num "${SAVE_CKPT_NUM}" \
       --batch_size "${PER_PROC_BATCH_SIZE}" \
+      --patch_size "${PATCH_SIZE}" \
       --update_freq "${UPDATE_FREQ}" \
       --input_size "${INPUT_SIZE}" \
       --mask_ratio "${MASK_RATIO}" \
@@ -77,7 +107,7 @@ for i in "${!all_embed_dim[@]}"; do
       --num_workers "${NUM_WORKERS}" \
       --pin_mem true \
       --eval_freq 1 \
-      --auto_resume true \
+      --auto_resume false \
       --seed "${SEED}" \
       --output_dir "${OUTDIR}" \
       --log_dir "${OUTDIR}" \

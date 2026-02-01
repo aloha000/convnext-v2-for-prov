@@ -29,9 +29,11 @@ from dataloader_ss import create_dataloader
 
 def get_args_parser():
     parser = argparse.ArgumentParser('FCMAE pre-training', add_help=False)
-    parser.add_argument('--batch_size', default=64, type=int,
+    parser.add_argument('--batch_size', default=32, type=int,
                         help='Per GPU batch size')
-    parser.add_argument('--epochs', default=800, type=int)
+    parser.add_argument('--patch_size', default=4, type=int,
+                        help='patch size')
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
                         help='epochs to warmup LR')
     parser.add_argument('--update_freq', default=1, type=int,
@@ -39,7 +41,7 @@ def get_args_parser():
 
     # Model
     parser.add_argument('--model', default='convnextv2_base', type=str, metavar='MODEL')
-    parser.add_argument('--input_size', default=224, type=int)
+    parser.add_argument('--input_size', default="60,92", type=str)
     parser.add_argument('--mask_ratio', default=0.6, type=float)
     parser.add_argument('--norm_pix_loss', action='store_true')
     parser.set_defaults(norm_pix_loss=True)
@@ -80,8 +82,8 @@ def get_args_parser():
     parser.add_argument("--metro_feat_channel", default=3, type=int)
     parser.add_argument("--metro_fcmae_dims", default="3,6,12,24")
 
-    parser.add_argument("--data_dir", default="/inspire/ssd/project/sais-mtm/public/qlz/data/PowerEstimateData/gongjia_processed_data/self_supervised/processed_solar")
-    parser.add_argument("--data_statistic_dir", default="/inspire/ssd/project/sais-mtm/public/qlz/data/PowerEstimateData/gongjia_processed_data/global_spatial_mean_std_fast.npz")
+    parser.add_argument("--data_dir", default="/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/self_supervised/processed_wind_1.2")
+    parser.add_argument("--data_statistic_dir", default="/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/Guangdong_spatial_mean_std_fast_1.2.npz")
 
     # evaluation
     parser.add_argument('--eval_freq', type=int, default=1, help='evaluate every N epochs (0 to disable)')
@@ -127,6 +129,7 @@ def main(args):
         distributed=args.distributed,
         pin_memory=args.pin_mem,
         seed=args.seed + utils.get_rank(),
+        patch_size=args.patch_size
     )
 
 
@@ -135,14 +138,22 @@ def main(args):
     log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
 
     # --------- Model
+    H, W = map(int, args.input_size.split(","))
+    input_size = (H, W)
+    # sample_batch = next(iter(train_loader))
+    # real_H = sample_batch["nwp"].shape[-2]
+    # real_W = sample_batch["nwp"].shape[-1]
+    # print("Real input size:", real_H, real_W)
+    # input_size = (real_H, real_W)
+    
     dims = parse_fcamae_dims(args.metro_fcmae_dims)
     model = fcmae.FCMAE(
-        img_size=args.input_size,
+        img_size=input_size,
         in_chans=args.metro_feat_channel,
         depths=[2, 2, 6, 2],
         dims=dims,
         mask_ratio=args.mask_ratio,
-        patch_size=8,
+        patch_size=args.patch_size,
         decoder_depth=args.decoder_depth,
         decoder_embed_dim=args.decoder_embed_dim,
         norm_pix_loss=args.norm_pix_loss
@@ -183,7 +194,7 @@ def main(args):
     # --------- Train
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(0, args.epochs):
         if args.evaluate_and_visualize:
             eval_stats = {}
             eval_stats = evaluate_one_epoch_all_farm(model, test_loader, device, epoch, save_visualize=True, log_writer=log_writer, args=args)
@@ -195,7 +206,7 @@ def main(args):
 
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
-
+        print(epoch)
         train_stats = train_one_epoch_all_farm(
             model, train_loader, optimizer, device, epoch, loss_scaler,
             log_writer=log_writer, args=args
@@ -235,8 +246,14 @@ def main(args):
 
 
 if __name__ == '__main__':
+    
     args = get_args_parser()
     args = args.parse_args()
+    # if args.debug:
+    #     import debugpy
+    #     debugpy.listen(("0.0.0.0", 5678))
+    #     debugpy.wait_for_client()
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)

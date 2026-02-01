@@ -7,9 +7,9 @@ from typing import Dict, List, Tuple, Any, Optional
 # ========================
 # Configuration
 # ========================
-META_PATH = "./meta_data_wind.json"
-DATA_X_DIR = "/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/data"
-OUTPUT_DIR = "/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/self_supervised/processed_wind"
+META_PATH = "./meta_data_wind_prov_2.json"
+DATA_X_DIR = "/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/npy_data_1.2_2"
+OUTPUT_DIR = "/inspire/ssd/project/sais-mtm/public/qlz/linan/dl/ConvNeXt-V2/self_supervised/processed_wind_1.2_2"
 NWP_LIST = ["NWP_1", "NWP_3"]
 
 BATCH_SIZE = 16

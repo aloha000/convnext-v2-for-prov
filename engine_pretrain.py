@@ -37,7 +37,8 @@ def train_one_epoch(model: torch.nn.Module,
         if not isinstance(samples, list):
             samples = samples.to(device, non_blocking=True)
         # @qinluozheng: add interplotion for alignment with original FCMAE
-        samples = F.interpolate(samples, size=56, mode='bilinear', align_corners=False)
+        # samples = F.interpolate(samples, size=56, mode='bilinear', align_corners=False)
+        
         labels = labels.to(device, non_blocking=True)
 
         loss, _, _ = model(samples, labels, mask_ratio=args.mask_ratio)
@@ -98,9 +99,8 @@ def train_one_epoch_all_farm(model: torch.nn.Module,
         if not isinstance(samples, list):
             samples = samples.to(device, non_blocking=True)
         # @qinluozheng: add interplotion for alignment with original FCMAE
-        samples = F.interpolate(samples, size=56, mode='bilinear', align_corners=False)
+        # samples = F.interpolate(samples, size=128, mode='bilinear', align_corners=False)
         labels = labels.to(device, non_blocking=True)
-
         loss, _, _ = model(samples, labels, mask_ratio=args.mask_ratio)
 
         loss_value = loss.item()
@@ -164,7 +164,7 @@ def evaluate_one_epoch_all_farm(model: torch.nn.Module,
         labels = labels.to(device, non_blocking=True)
 
         # align with original FCMAE
-        samples = F.interpolate(samples, size=56, mode='bilinear', align_corners=False)
+        # samples = F.interpolate(samples, size=128, mode='bilinear', align_corners=False)
 
         # forward only
         if save_visualize:

@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, DistributedSampler, RandomSampler, SequentialSampler, Subset
+import torch.nn.functional as F
+from functools import partial
 
 # ========================
 # Stats & Transforms
@@ -109,22 +111,22 @@ class NWPDataset(Dataset):
     Item structure: {"nwp": Tensor(C,F?,H,W) after preprocess, "time": str, "farm": str}
     """
 
-    def __init__(self, root_dir, preprocessor=None, transform=None):
+    def __init__(self, root_dir, preprocessor=None, transform=None,province=None):
         self.root_dir = root_dir
         self.transform = transform
         self.preprocessor = preprocessor
         self.samples = []
 
-        farm_dirs = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
-        for farm_id in farm_dirs:
-            npz_files = sorted(glob(os.path.join(root_dir, farm_id, "batch_*.npz")))
-            for path in npz_files:
-                self.samples.append({"path": path, "farm": farm_id})
+        prov_dir = os.path.join(root_dir, province)
+
+        npz_files = sorted(glob(os.path.join(root_dir, province, "batch_*.npz")))
+        for path in npz_files:
+            self.samples.append({"path": path, "farm": province})
 
         if not self.samples:
             raise RuntimeError(f"No .npz files found under {root_dir}")
 
-        print(f"[NWPDataset] Found {len(self.samples)} batch files from {len(farm_dirs)} farms.")
+        print(f"[NWPDataset] Found {len(self.samples)} batch files from {province}.")
 
     def __len__(self):
         return len(self.samples)
@@ -132,7 +134,7 @@ class NWPDataset(Dataset):
     def __getitem__(self, idx):
         sample_info = self.samples[idx]
         npz_data = np.load(sample_info["path"], allow_pickle=True)
-        nwp = npz_data["nwp"]      # (B, 3, 8, H, W) or (B, F, H, W) depending on your packing
+        nwp = npz_data["nwp"]   # (B, 3, 8, H, W) or (B, F, H, W) depending on your packing
         times = npz_data["time"]   # (B,)
 
         out = []
@@ -150,7 +152,7 @@ class NWPDataset(Dataset):
         return out
 
 
-def collate_nwp(batch_list):
+def collate_nwp(batch_list,patch_size=4):
     """
     batch_list: list of lists (each inner list is samples decoded from one .npz file)
     Flattens, stacks nwp tensors, and keeps time/farm as python lists.
@@ -163,13 +165,17 @@ def collate_nwp(batch_list):
             flat.append(sub)
 
     if len(flat) == 0:
-        # very defensive; should not happen unless an npz has no items
         return {"nwp": torch.empty(0), "time": [], "farm": []}
 
     nwps = torch.stack([s["nwp"] for s in flat], dim=0)
     times = [s["time"] for s in flat]
     farms = [s["farm"] for s in flat]
-    return {"nwp": nwps, "time": times, "farm": farms}
+
+    return {
+        "nwp": nwps,      # (B, C, T, H_pad, W_pad)
+        "time": times,
+        "farm": farms,
+    }
 
 
 # ========================
@@ -180,7 +186,8 @@ def _seed_worker(worker_id):
     worker_seed = torch.initial_seed() % (2**32)
     np.random.seed(worker_seed)
 
-def _build_loader(dataset, batch_size, num_workers, pin_mem, sampler, drop_last):
+def _build_loader(dataset, batch_size, num_workers, pin_mem, sampler, drop_last,patch_size):
+    collate = partial(collate_nwp, patch_size=patch_size)
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -189,7 +196,7 @@ def _build_loader(dataset, batch_size, num_workers, pin_mem, sampler, drop_last)
         num_workers=num_workers,
         pin_memory=pin_mem,
         drop_last=drop_last,
-        collate_fn=collate_nwp,
+        collate_fn=collate,
         worker_init_fn=_seed_worker,
         persistent_workers=(num_workers > 0),
         prefetch_factor=(2 if num_workers > 0 else None),
@@ -206,6 +213,8 @@ def create_dataloader(
     pin_memory: bool = True,
     seed: int = 42,
     train_ratio: float = 0.8,
+    patch_size: int = 4,
+    province: str = 'Guangdong'
 ):
     """
     Returns: train_loader, test_loader, train_sampler, test_sampler
@@ -216,11 +225,11 @@ def create_dataloader(
     tfm = NormalizeCF(mean_hw, std_hw, eps=1e-6)
 
     if dataset_type == "solar":
-        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_solar, transform=tfm)
+        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_solar, transform=tfm,province=province)
     elif dataset_type == "wind":
-        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_wind, transform=tfm)
+        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_wind, transform=tfm,province=province)
     elif dataset_type == "all":
-        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_all, transform=tfm)
+        full_dataset = NWPDataset(data_dir, preprocessor=preprocess_all, transform=tfm,province=province)
     else:
         raise ValueError(f"Unknown dataset_type: {dataset_type}")
 
@@ -246,10 +255,10 @@ def create_dataloader(
 
     # ----- Loaders
     train_loader = _build_loader(
-        train_set, batch_size, num_workers, pin_memory, train_sampler, drop_last=True
+        train_set, batch_size, num_workers, pin_memory, train_sampler, drop_last=True, patch_size=patch_size
     )
     test_loader = _build_loader(
-        test_set, batch_size, num_workers, pin_memory, test_sampler, drop_last=False
+        test_set, batch_size, num_workers, pin_memory, test_sampler, drop_last=False, patch_size=patch_size
     )
 
     # Helpful print once (rank 0 suggested outside)

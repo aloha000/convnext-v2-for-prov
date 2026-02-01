@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-ROOT = Path("../data")
+ROOT = Path("../npy_data_1.2_2")
 NWP1 = "NWP_1"
-NWP2 = "NWP_2"
+# NWP2 = "NWP_2"
 NWP3 = "NWP_3"
 MAX_WORKERS = min(32, (os.cpu_count() or 4) * 5)  # I/O 密集，开多些线程
 
@@ -43,14 +43,14 @@ def process_prov(prov: str):
         return None
 
     # 2) 校验 NWP_2 与 NWP_3 是否具备相同文件
-    nwp2_dir = base / NWP2
+    # nwp2_dir = base / NWP2
     nwp3_dir = base / NWP3
-    nwp2_set = set([f for f in list_dir_files(nwp2_dir) if f.endswith(".npy")])
+    # nwp2_set = set([f for f in list_dir_files(nwp2_dir) if f.endswith(".npy")])
     nwp3_set = set([f for f in list_dir_files(nwp3_dir) if f.endswith(".npy")])
 
     filtered = []
     for f in nwp1_files:
-        if f in nwp2_set and f in nwp3_set:
+        if f in nwp3_set:
             filtered.append(f)
         else:
             print(f"Warning: NWP data mismatch for farm {prov}, file {f} missing in NWP_2 or NWP_3")
@@ -87,7 +87,7 @@ def main():
     print(f"Total number of training data: {total_training_data}")
     print(f"Total number of farms: {total_provs}")
 
-    with open("meta_data_wind.json", "w") as f:
+    with open("meta_data_wind_prov_2.json", "w") as f:
         json.dump(meta_data, f, indent=4)
 
 if __name__ == "__main__":

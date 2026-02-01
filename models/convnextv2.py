@@ -11,36 +11,8 @@ import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
 from .utils import LayerNorm, GRN
 
-class Block(nn.Module):
-    """ ConvNeXtV2 Block.
-    
-    Args:
-        dim (int): Number of input channels.
-        drop_path (float): Stochastic depth rate. Default: 0.0
-    """
-    def __init__(self, dim, drop_path=0.):
-        super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim) # depthwise conv
-        self.norm = LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, 4 * dim) # pointwise/1x1 convs, implemented with linear layers
-        self.act = nn.GELU()
-        self.grn = GRN(4 * dim)
-        self.pwconv2 = nn.Linear(4 * dim, dim)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x):
-        input = x
-        x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
-        x = self.norm(x)
-        x = self.pwconv1(x)
-        x = self.act(x)
-        x = self.grn(x)
-        x = self.pwconv2(x)
-        x = x.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
 
-        x = input + self.drop_path(x)
-        return x
 
 class ConvNeXtV2(nn.Module):
     """ ConvNeXt V2
@@ -68,7 +40,7 @@ class ConvNeXtV2(nn.Module):
         for i in range(3):
             downsample_layer = nn.Sequential(
                     LayerNorm(dims[i], eps=1e-6, data_format="channels_first"),
-                    nn.Conv2d(dims[i], dims[i+1], kernel_size=2, stride=2),
+                    nn.Conv2d(dims[i], dims[i+1], kernel_size=3, stride=1),
             )
             self.downsample_layers.append(downsample_layer)
 
@@ -94,11 +66,23 @@ class ConvNeXtV2(nn.Module):
             trunc_normal_(m.weight, std=.02)
             nn.init.constant_(m.bias, 0)
 
-    def forward_features(self, x):
+    def forward_features_keep(self, x):
+        for i in range(4):
+            x = self.downsample_layers[i](x)
+            x = self.stages[i](x)
+        return x # global average pooling, (N, C, H, W) -> (N, C, H/4, W/4)
+
+    def forward_features_mean(self, x):
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
         return self.norm(x.mean([-2, -1])) # global average pooling, (N, C, H, W) -> (N, C)
+
+    def forward_features_center(self, x):
+        for i in range(4):
+            x = self.downsample_layers[i](x)
+            x = self.stages[i](x)
+        return self.norm(x[:,:,3,3]) # global average pooling, (N, C, H, W) -> (N, C)
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -106,19 +90,123 @@ class ConvNeXtV2(nn.Module):
         return x
 
 class ConvNeXtV2ForPowerEstimate(nn.Module):
-    def __init__(self, convnextv2, mlp):
+    def __init__(self, convnextv2, mlp,cnn, time_encoder, feature_type="mean"):
         super().__init__()
         self.convnextv2 = convnextv2
         self.mlp = mlp
+        self.power_map_cnn = cnn
+        self.time_encoder = time_encoder
         for param in self.convnextv2.parameters():
             param.requires_grad = False
+            
+        # if feature_type == "mean":
+        #     self.nwp_encoder = convnextv2.forward_features_mean
+        # elif feature_type == "center":
+        #     self.nwp_encoder = convnextv2.forward_features_center
+        # elif feature_type == "keep":
+        #     self.nwp_encoder = convnextv2.forward_features_keep
+        self.nwp_encoder = convnextv2.forward_features_keep
     
-    def forward(self, x):
+    def forward(self, x, x_time=None, farm=None):
+        # deep feature process
         with torch.no_grad():
-            x = self.convnextv2.forward_features(x)
+            #x = self.convnextv2.forward_features_mean(x)
+            x = self.nwp_encoder(x)
+        x_time = self.time_encoder(x_time)
+        x_time = x_time.unsqueeze(-1).unsqueeze(-1)
+        x_time = x_time.expand(x_time.shape[0], x_time.shape[1], x.shape[-2], x.shape[-1])
+
+        x = torch.cat([x, x_time], dim=1)
+                
+        # concate the x(B, C1, H, W), x_time (C2) per channel
+        # the ouptut should be (B, C1+C2, H, W)
+        
+        # USE CNN TO PROCESS THE MAP FEATURE
+        
+        # PRDICET THE POWER MAP
+        
+        
+        # PREDICT THE PROVINCE POWER
+        
+        pred = self.power_map_cnn(x)
+        
+        return pred
+
+class ConvNeXtV2ForAllFarmPowerEstimate(ConvNeXtV2ForPowerEstimate):
+    def __init__(self, convnextv2, mlp, time_encoder, farm_id_encoder, feature_type="mean"):
+        super().__init__(convnextv2, mlp, time_encoder, feature_type)
+        self.farm_id_encoder = farm_id_encoder
+        
+    
+    def forward(self, x, x_c=None, x_time=None, farm=None):
+        # deep feature process
+        with torch.no_grad():
+            #x = self.convnextv2.forward_features_mean(x)
+            x = self.nwp_encoder(x)
+        x_time = self.time_encoder(x_time)
+        x_farm = self.farm_id_encoder(farm)
+                
+        x = torch.cat([x, x_c, x_time, x_farm], dim=-1)
         pred = self.mlp(x)
+        
+        return pred
+
+class ConvNeXtV2N2NPowerEstimate(ConvNeXtV2ForPowerEstimate):
+    def __init__(self, convnextv2, transformer, mlp_pre, mlp_post, time_encoder, feature_type="mean"):
+        super().__init__(convnextv2, mlp_pre, time_encoder, feature_type)
+        self.transformer_encoder = transformer
+        self.mlp_post = mlp_post
+    
+    def forward(self, x, x_c=None, x_time=None, farm=None):
+        # Conv2D only accepts 3D or 4D input, so convert x:[B, G, C, H, W] -> [B*G, C, H, W]
+        b, g, c, h, w = x.shape
+        x = x.view(b*g, c, h, w)
+        with torch.no_grad():
+            x = self.nwp_encoder(x) #[B*G, output_channels]
+        x = x.view(b, g, -1) #[B, G, output_channels]
+        # x_c:[B, G, fcmae_input_dim]
+        x_time = self.time_encoder(x_time) # x_time:[B, G, time_dim]
+        x = torch.cat([x, x_c, x_time], dim=-1)
+        x = self.mlp(x)
+        x = self.transformer_encoder(x)
+        pred = self.mlp_post(x)
         return pred
     
+class ConvNeXtV2N2NForAllFarmPowerEstimate(ConvNeXtV2ForPowerEstimate):
+    def __init__(self, d_transformer, convnextv2, transformer, mlp_pre, mlp_post, time_encoder, farm_id_encoder, farm_mlp, feature_type="mean"):
+        super().__init__(convnextv2, mlp_pre, time_encoder, feature_type)
+        self.d_transformer = d_transformer
+        self.transformer_encoder = transformer
+        self.mlp_post = mlp_post
+        self.farm_id_encoder = farm_id_encoder
+        self.farm_mlp = farm_mlp
+        self.pre_norm = LayerNorm(self.d_transformer, eps=1e-6)
+    
+    def forward(self, x, x_c=None, x_time=None, farm=None):
+        #x:[B, G, C, H, W] -> [B*G, C, H, W]
+        b, g, c, h, w = x.shape
+        x = x.view(b*g, c, h, w)
+        with torch.no_grad():
+            x = self.nwp_encoder(x) #[B*G, output_channels]
+        x = x.view(b, g, -1) #[B, G, output_channels]
+        # x_c:[B, G, fcmae_input_dim]
+        x_time = self.time_encoder(x_time) # x_time:[B, G, time_dim]
+        x = torch.cat([x, x_c, x_time], dim=-1)
+        x = self.mlp(x)
+        
+        # add special token for farm embedding
+        x_farm = self.farm_id_encoder(farm) # x_farm: [B, farm_dim]
+        x_farm = x_farm.unsqueeze(1) # x_farm:[B, 1, farm_dim]
+        x_farm_token = self.farm_mlp(x_farm) # x_farm_token: [B, 1, d_tfm]
+        x_input = torch.cat([x_farm_token, x], dim=1) # [B, 1+group_len, d_tfm]
+        
+        # 1114: add an extra layer norm before transformer encoder
+        x_input = self.pre_norm(x_input)
+        x = self.transformer_encoder(x_input)
+        pred = self.mlp_post(x) # [B, 1+group_len, bins]
+        pred = pred[:, 1:, :] # [B, group_len, bins]
+        return pred
+
 def convnextv2_atto(**kwargs):
     model = ConvNeXtV2(depths=[2, 2, 6, 2], dims=[40, 80, 160, 320], **kwargs)
     return model

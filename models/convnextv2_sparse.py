@@ -83,9 +83,13 @@ class SparseConvNeXtV2(nn.Module):
         )
         self.downsample_layers.append(stem)
         for i in range(3):
+            # downsample_layer = nn.Sequential(
+            #     MinkowskiLayerNorm(dims[i], eps=1e-6),
+            #     MinkowskiConvolution(dims[i], dims[i+1], kernel_size=2, stride=2, bias=True, dimension=D)
+            # )
             downsample_layer = nn.Sequential(
                 MinkowskiLayerNorm(dims[i], eps=1e-6),
-                MinkowskiConvolution(dims[i], dims[i+1], kernel_size=2, stride=2, bias=True, dimension=D)
+                MinkowskiConvolution(dims[i], dims[i+1], kernel_size=2, stride=1, bias=True, dimension=D)
             )
             self.downsample_layers.append(downsample_layer)
         
@@ -121,7 +125,7 @@ class SparseConvNeXtV2(nn.Module):
 
     def forward(self, x, mask):
         num_stages = len(self.stages)
-        mask = self.upsample_mask(mask, 2**(num_stages-1))
+        mask = self.upsample_mask(mask, 1)
         mask = mask.unsqueeze(1).type_as(x)
         
         # patch embedding
@@ -137,3 +141,19 @@ class SparseConvNeXtV2(nn.Module):
         # densify
         x = x.dense()[0]
         return x
+    
+import math
+
+def solve_hw(L, h, w):
+    y = math.sqrt(L * w / h)
+    x = L / y
+
+    # 强制转成整数
+    x = int(round(x))
+    y = int(round(y))
+
+    # 校验
+    assert x * y == L, f"Invalid factorization: {x}*{y}!={L}"
+    assert abs(x / y - h / w) < 1e-6, "Aspect ratio mismatch"
+
+    return x, y
